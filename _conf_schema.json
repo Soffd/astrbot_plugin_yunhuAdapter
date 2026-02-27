@@ -1,0 +1,21 @@
+{
+  "ws_url": {
+    "description": "云湖 SDK WebSocket 地址",
+    "type": "string",
+    "hint": "SDK 启动后暴露的 WS 桥接地址，例如 ws://127.0.0.1:8080/ws",
+    "obvious_hint": true,
+    "default": "ws://127.0.0.1:8080/ws"
+  },
+  "ws_token": {
+    "description": "WebSocket 鉴权 Token",
+    "type": "string",
+    "hint": "与 SDK 启动参数 --ws-token 保持一致，不需要鉴权则留空",
+    "default": ""
+  },
+  "reply_in_thread": {
+    "description": "以线程方式回复消息",
+    "type": "bool",
+    "hint": "开启后回复会带上 parentId，将在原消息下方显示为子消息（线程）",
+    "default": false
+  }
+}
