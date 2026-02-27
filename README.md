@@ -19,7 +19,7 @@
 ## 目录结构
 
 ```
-astrbot_plugin_yunhu/
+astrbot_plugin_yunhuAdapter/
 ├── main.py              # 插件入口，注册 YunhuPlugin
 ├── yunhu_adapter.py     # 平台适配器，处理连接、事件接收与消息转换
 ├── yunhu_event.py       # 消息事件类，负责将 MessageChain 发回云湖 SDK
