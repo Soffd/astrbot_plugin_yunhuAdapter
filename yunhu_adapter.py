@@ -53,7 +53,6 @@ class YunhuAdapter(Platform):
         platform_settings: dict,
         event_queue: asyncio.Queue,
     ) -> None:
-        # Platform 基类需要 config 和 event_queue 参数
         super().__init__(platform_config, event_queue)
         
         self.config = platform_config
@@ -63,7 +62,7 @@ class YunhuAdapter(Platform):
         self._session: aiohttp.ClientSession | None = None
         self._running = False
 
-    # ─── 必须实现的接口 ───────────────────────────────────────────────────────
+    # 必须实现的接口
 
     def meta(self) -> PlatformMetadata:
         return PlatformMetadata("yunhu", "云湖平台适配器", "yunhu")
@@ -71,7 +70,7 @@ class YunhuAdapter(Platform):
     async def send_by_session(self, session: MessageSesion, message_chain: MessageChain):
         await super().send_by_session(session, message_chain)
 
-    # ─── 主循环 ───────────────────────────────────────────────────────────────
+    # 主循环
 
     async def run(self):
         """连接 SDK WS，断线自动重连"""
@@ -125,7 +124,7 @@ class YunhuAdapter(Platform):
         self._ws = None
         self._session = None
 
-    # ─── 事件处理 ─────────────────────────────────────────────────────────────
+    # 事件处理
 
     async def _on_raw_event(self, raw: str):
         """解析 SDK 推来的原始 JSON 事件"""
@@ -213,11 +212,9 @@ class YunhuAdapter(Platform):
         chat_type = chat_data.get("chatType", "bot")
 
         if chat_type == "group":
-            # 群聊：chatId 是群 ID
             recv_id = chat_data.get("chatId", "")
             recv_type = "group"
         else:
-            # 私聊（chatType=bot）：chatId 是机器人自身 ID，必须用 senderId 作为 recvId
             recv_id = abm.sender.user_id
             recv_type = "user"
 

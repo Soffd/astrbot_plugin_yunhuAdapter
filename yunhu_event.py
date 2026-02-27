@@ -117,7 +117,7 @@ class YunhuMessageEvent(AstrMessageEvent):
                 }
 
                 if url.startswith("file:///") or (url.startswith("/") and os.path.exists(url)):
-                    # 本地文件：读成 base64 随 WS 发送，SDK 那边负责上传
+                    # 本地文件读成 base64 随 WS 发送，SDK 那边负责上传
                     result = self._read_local_file_b64(url)
                     if result:
                         b64, filename = result
@@ -127,7 +127,7 @@ class YunhuMessageEvent(AstrMessageEvent):
                         logger.error(f"[云湖] 图片文件读取失败，跳过: {url}")
                         continue
                 elif url.startswith("http"):
-                    # 远程 URL：让 SDK 侧去下载，避免双重传输
+                    # 远程 URL让 SDK 侧去下载
                     payload["download_url"] = url
                 else:
                     # 已经是 imageKey
