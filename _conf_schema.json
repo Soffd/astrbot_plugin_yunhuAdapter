@@ -12,6 +12,13 @@
     "hint": "与 SDK 启动参数 --ws-token 保持一致，不需要鉴权则留空",
     "default": ""
   },
+  "bot_token": {
+    "description": "云湖机器人 Bot Token",
+    "type": "string",
+    "hint": "从云湖官网控制台获取的机器人 Token，用于下载用户发来的图片/文件/视频。不填则 AstrBot 无法处理媒体消息。",
+    "obvious_hint": true,
+    "default": ""
+  },
   "reply_in_thread": {
     "description": "以线程方式回复消息",
     "type": "bool",

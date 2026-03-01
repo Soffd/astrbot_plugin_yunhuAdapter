@@ -8,6 +8,8 @@ AstrBot 处理结果经由同一 WS 连接发回 SDK，由 SDK 调用云湖 HTTP
 import asyncio
 import json
 import logging
+import os
+import tempfile
 
 import aiohttp
 
@@ -24,8 +26,116 @@ from .yunhu_event import YunhuMessageEvent
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+# 云湖媒体资源下载基础地址
+_YUNHU_CDN_BASE = "https://chat-go.jwzhd.com/open-apis/v1"
+
+
+def _yunhu_media_url(media_type: str, key: str, token: str = "") -> str:
+    """
+    将云湖媒体 Key 转换为可访问的 HTTP 下载 URL，供 AstrBot 下载使用。
+    media_type: "image" | "file" | "video"
+    如果 key 已经是完整 HTTP URL 则直接返回。
+    """
+    if not key:
+        return ""
+    if key.startswith("http"):
+        if token and "token=" not in key:
+            sep = "&" if "?" in key else "?"
+            return f"{key}{sep}token={token}"
+        return key
+    url = f"{_YUNHU_CDN_BASE}/{media_type}/download?key={key}"
+    if token:
+        url += f"&token={token}"
+    return url
+
+
 RECONNECT_DELAY = 5   # 断线重连等待秒数
 RECV_TIMEOUT    = 60  # 心跳超时（SDK 每 30s 发一次 ping）
+
+# 媒体下载后缀映射
+_MEDIA_SUFFIX = {"image": ".jpg", "file": ".bin", "video": ".mp4"}
+
+
+async def _download_media(url: str, media_type: str, bot_token: str = "") -> str:
+    """
+    从云湖 CDN 下载媒体文件到本地临时文件，返回绝对路径。
+    下载失败时返回空字符串，调用方回退到直接使用原始 URL。
+
+    云湖 CDN (chat-img.jwznb.com 等) 需要携带
+    Referer: https://myapp.jwznb.com 请求头才能访问，token 鉴权对此域名无效。
+    """
+    if not url:
+        return ""
+    headers = {
+        "Referer": "https://myapp.jwznb.com",
+    }
+    try:
+        suffix = _MEDIA_SUFFIX.get(media_type, ".bin")
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(
+                url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=60),
+                allow_redirects=True,
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(f"[云湖] 媒体下载失败 status={resp.status} url={url}")
+                    return ""
+                ct = resp.headers.get("Content-Type", "")
+                if "jpeg" in ct or "jpg" in ct:
+                    suffix = ".jpg"
+                elif "png" in ct:
+                    suffix = ".png"
+                elif "gif" in ct:
+                    suffix = ".gif"
+                elif "webp" in ct:
+                    suffix = ".webp"
+                elif "mp4" in ct:
+                    suffix = ".mp4"
+                raw_bytes = await resp.read()
+                fd, path = tempfile.mkstemp(suffix=suffix)
+                with os.fdopen(fd, "wb") as f:
+                    f.write(raw_bytes)
+                logger.info(f"[云湖] 媒体下载成功: {path} ({len(raw_bytes)} bytes)")
+                return path
+    except Exception as e:
+        logger.warning(f"[云湖] 媒体下载异常: {e}，将回退到 URL 模式")
+        return ""
+
+
+async def _download_image_as_base64(url: str, filename: str = "image.jpg") -> str:
+    """
+    使用云湖 CDN 所需的 Referer 请求头下载图片，返回 "base64://XXXX" 格式字符串。
+    下载失败时返回空字符串，调用方应降级到原始 URL。
+    """
+    import base64 as _base64
+
+    if not url:
+        return ""
+
+    headers = {"Referer": "https://myapp.jwznb.com"}
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(
+                url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=True,
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        f"[云湖] 图片预下载失败 status={resp.status} url={url[:80]}"
+                    )
+                    return ""
+                raw_bytes = await resp.read()
+                b64_str = _base64.b64encode(raw_bytes).decode("ascii")
+                logger.info(
+                    f"[云湖] 图片预下载成功: {filename} ({len(raw_bytes)} bytes)"
+                )
+                return f"base64://{b64_str}"
+    except Exception as e:
+        logger.warning(f"[云湖] 图片预下载异常: {e}，url={url[:80]}")
+        return ""
 
 
 @register_platform_adapter(
@@ -34,6 +144,7 @@ RECV_TIMEOUT    = 60  # 心跳超时（SDK 每 30s 发一次 ping）
     default_config_tmpl={
         "ws_url": "ws://127.0.0.1:8080/ws",
         "ws_token": "",
+        "bot_token": "",
         "reply_in_thread": False,
     },
 )
@@ -90,6 +201,7 @@ class YunhuAdapter(Platform):
                     ws_url,
                     heartbeat=30,
                     receive_timeout=RECV_TIMEOUT,
+                    max_msg_size=100 * 1024 * 1024,  # 100 MB，支持发送大文件 base64，但仍受云湖 API 限制，等以后云湖升级后再调整
                 )
                 logger.info("[云湖] WS 连接成功，开始接收事件")
                 await self._receive_loop()
@@ -139,14 +251,15 @@ class YunhuAdapter(Platform):
         event_type = header.get("eventType", "")
 
         if event_type in ("message.receive.normal", "message.receive.instruction"):
-            abm = self._convert_message(data)
+            abm = await self._convert_message(data)
             if abm:
                 await self._handle_msg(abm, data)
         else:
             logger.debug(f"[云湖] 忽略事件类型: {event_type}")
 
-    def _convert_message(self, data: dict) -> AstrBotMessage | None:
-        """将云湖事件原始 JSON 转换为 AstrBotMessage"""
+    async def _convert_message(self, data: dict) -> AstrBotMessage | None:
+        """将云湖事件原始 JSON 转换为 AstrBotMessage，媒体文件下载到本地临时文件供 AstrBot 使用"""
+        _bot_token = self.config.get("bot_token", "")
         try:
             event_data = data.get("event", {})
             sender_data = event_data.get("sender", {})
@@ -180,18 +293,70 @@ class YunhuAdapter(Platform):
                 text = content.get("text", "")
                 abm.message_str = text
                 chain.append(Plain(text=text))
+
             elif content_type == "image":
-                image_key = content.get("imageKey", "")
                 abm.message_str = "[图片]"
-                chain.append(Image(file=image_key))
+                cdn_url = content.get("imageUrl") or content.get("url") or ""
+                if cdn_url:
+                    # 云湖 CDN 需要携带 Referer 才能访问（无此 Header 会返回 403）。
+                    filename = os.path.basename(cdn_url.split("?")[0]) or "image.jpg"
+                    b64_file = await _download_image_as_base64(cdn_url, filename)
+                    if b64_file:
+                        img = Image(file=b64_file)
+                        img.filename = filename
+                        chain.append(img)
+                        logger.info(f"[云湖] 图片以 base64:// 写入消息链: {filename}")
+
+                    else:
+                        logger.warning(f"[云湖] base64 下载失败，尝试本地临时文件降级: {cdn_url[:80]}")
+                        local_path = await _download_media(cdn_url, "image")
+                        if local_path:
+                            file_uri = "file:///" + local_path.lstrip("/")
+                            img = Image(file=file_uri)
+                            img.filename = filename
+                            chain.append(img)
+                            logger.info(f"[云湖] 图片以 file:/// 写入消息链: {file_uri}")
+                        else:
+                            logger.warning(f"[云湖] 本地下载也失败，最终降级为 CDN URL: {cdn_url[:80]}")
+                            img = Image(file=cdn_url)
+                            img.filename = filename
+                            chain.append(img)
+                else:
+                    logger.warning(f"[云湖] 图片无可用地址，原始 content={content!r}")
+                    chain.append(Plain(text="[图片（无法获取）]"))
+
             elif content_type == "file":
-                file_key = content.get("fileKey", "")
-                abm.message_str = "[文件]"
-                chain.append(File(file=file_key))
+                cdn_url = content.get("fileUrl") or content.get("url") or ""
+                file_name = (
+                    content.get("fileName")
+                    or content.get("file_name")
+                    or content.get("name")
+                    or os.path.basename(cdn_url.split("?")[0])
+                    or "unknown_file"
+                )
+                abm.message_str = f"[文件:{file_name}]"
+                if cdn_url:
+                    chain.append(File(file=cdn_url, name=file_name))
+                else:
+                    logger.warning(f"[云湖] 文件无可用地址，原始 content={content!r}")
+                    chain.append(Plain(text=f"[文件:{file_name}（无法获取）]"))
+
             elif content_type == "video":
-                video_key = content.get("videoKey", "")
                 abm.message_str = "[视频]"
-                chain.append(Video(file=video_key))
+                cdn_url = content.get("videoUrl") or content.get("url") or ""
+                if cdn_url:
+                    filename = os.path.basename(cdn_url.split("?")[0]) or "video.mp4"
+                    chain.append(Video(file=cdn_url, filename=filename))
+                else:
+                    logger.warning(f"[云湖] 视频无可用地址，原始 content={content!r}")
+                    chain.append(Plain(text="[视频（无法获取）]"))
+
+
+            elif content_type == "markdown":
+                text = content.get("text", "")
+                abm.message_str = text
+                chain.append(Plain(text=text))
+
             else:
                 abm.message_str = f"[{content_type}]"
                 chain.append(Plain(text=abm.message_str))
