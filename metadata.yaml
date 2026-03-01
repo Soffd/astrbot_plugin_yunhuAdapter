@@ -1,6 +1,7 @@
 name: astrbot_plugin_yunhuAdapter
 author: Yuki Soffd
 description: 将 AstrBot 接入云湖机器人平台的插件，通过 WebSocket 与云湖 SDK 桥接通信。
-version: 1.0.0
+version: 1.1.0
 
 repo: https://github.com/Soffd/astrbot_plugin_yunhuAdapter
+
