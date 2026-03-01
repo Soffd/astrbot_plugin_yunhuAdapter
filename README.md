@@ -6,7 +6,7 @@
 
 ## 更新说明
 
-## v1.1.0 （本次需要同时更新[yunhubot-websdk](https://github.com/Soffd/yunhubot-websdk "yunhubot-websdk") 才能正常使用）
+## v1.1.0 （本次需要同时更新 [yunhubot-websdk](https://github.com/Soffd/yunhubot-websdk "yunhubot-websdk") 才能正常使用）
 - 修复发送一些插件提交的图片返回 413 的错误。
 - 修复无法识别 markdown 消息的错误。
 - 修复无法获取图片的错误。
@@ -60,7 +60,7 @@ astrbot_plugin_yunhuAdapter/
 cd /path/to/AstrBot/data/plugins/
 
 # 克隆仓库
-git clone https://github.com/Soffd/astrbot_plugin_yunhuAdapter.git astrbot_plugin_yunhu
+git clone https://github.com/Soffd/astrbot_plugin_yunhuAdapter.git
 ```
 
 安装完成后重启 AstrBot 即可加载插件。
@@ -149,7 +149,7 @@ AstrBot 加载插件后，适配器会自动连接 SDK 的 WS 端点，日志中
 
 **Q：图片下载成功，但是其他插件无法处理图片？**
 
-云湖官方的图片有鉴权，其他插件没有请求头会被拦截，目前没想到解决办法，只能将图片提交给 LLM 。
+云湖官方的图片有鉴权（`Referer: https://myapp.jwznb.com`），其他插件没有请求头会被拦截，目前没想到解决办法，只能将图片提交给 LLM 。
 
 ---
 
@@ -159,3 +159,4 @@ MIT License
 
 
 ---
+
