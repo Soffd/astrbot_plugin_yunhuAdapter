@@ -303,7 +303,6 @@ class YunhuAdapter(Platform):
                     b64_file = await _download_image_as_base64(cdn_url, filename)
                     if b64_file:
                         img = Image(file=b64_file)
-                        img.filename = filename
                         chain.append(img)
                         logger.info(f"[云湖] 图片以 base64:// 写入消息链: {filename}")
 
@@ -313,13 +312,11 @@ class YunhuAdapter(Platform):
                         if local_path:
                             file_uri = "file:///" + local_path.lstrip("/")
                             img = Image(file=file_uri)
-                            img.filename = filename
                             chain.append(img)
                             logger.info(f"[云湖] 图片以 file:/// 写入消息链: {file_uri}")
                         else:
                             logger.warning(f"[云湖] 本地下载也失败，最终降级为 CDN URL: {cdn_url[:80]}")
                             img = Image(file=cdn_url)
-                            img.filename = filename
                             chain.append(img)
                 else:
                     logger.warning(f"[云湖] 图片无可用地址，原始 content={content!r}")
