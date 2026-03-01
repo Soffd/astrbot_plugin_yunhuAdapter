@@ -6,6 +6,9 @@
 
 ## 更新说明
 
+## v1.1.1
+- 兼容性修订
+
 ## v1.1.0 （本次需要同时更新 [yunhubot-websdk](https://github.com/Soffd/yunhubot-websdk "yunhubot-websdk") 才能正常使用）
 - 修复发送一些插件提交的图片返回 413 的错误。
 - 修复无法识别 markdown 消息的错误。
@@ -159,4 +162,5 @@ MIT License
 
 
 ---
+
 
