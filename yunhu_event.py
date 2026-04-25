@@ -1,15 +1,24 @@
-# -*- coding: utf-8 -*-
+"""
+云湖平台消息事件
+
+通过 YunhuClient 直接调用云湖 HTTP API 发送消息，
+支持文本、Markdown、图片、文件、视频、按钮、撤回、编辑、看板等全部功能。
+"""
 import asyncio
 import base64
 import json
 import logging
 import os
+import tempfile
 import aiohttp
-from typing import Optional
+from typing import Optional, List
 
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.platform import AstrBotMessage, PlatformMetadata
+from astrbot.api.platform import AstrBotMessage, PlatformMetadata, MessageMember
 from astrbot.api.message_components import Plain, Image, File, Video, Record
+
+from .client import YunhuClient
+from .models import Button, ButtonGroup, ApiResponse
 
 logger = logging.getLogger("yunhu.event")
 
@@ -19,23 +28,38 @@ _MAX_TEXT_LEN = 3500
 # 常见图片文件扩展名，用于判断 Plain 组件是否实为本地图片路径
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
+import re as _re
 
-def _normalize_local_path(path: str) -> str:
-    """
-    将各种 file:// 格式路径统一转换为绝对路径字符串。
-    无论 file:// 后有几个斜杠，都正确解析：
-      file:////tmp/a.jpg  -> /tmp/a.jpg  (AstrBot 生成的四斜杠格式)
-      file:///tmp/a.jpg   -> /tmp/a.jpg
-      file://tmp/a.jpg    -> /tmp/a.jpg
-      /tmp/a.jpg          -> /tmp/a.jpg  (裸路径原样返回)
-    """
-    if path.startswith("file://"):
-        rest = path[7:]                  
-        path = "/" + rest.lstrip("/") 
-    return path
+# 各类 Markdown 特征的正则，按"命中任意一条即视为 Markdown"
+_MD_PATTERNS = [
+    _re.compile(r"^#{1,6}\s+\S", _re.MULTILINE),          # 标题：# 一级  ## 二级 …
+    _re.compile(r"\*\*\S.*?\S\*\*"),                        # 粗体：**text**
+    _re.compile(r"(?<!\*)\*(?!\*)\S.*?\S\*(?!\*)"),         # 斜体：*text*（排除 **）
+    _re.compile(r"__\S.*?\S__"),                            # 粗体：__text__
+    _re.compile(r"(?<!_)_(?!_)\S.*?\S_(?!_)"),             # 斜体：_text_（排除 __）
+    _re.compile(r"`{1,3}[\s\S]+?`{1,3}"),                  # 行内/块代码：`code` 或 ```block```
+    _re.compile(r"^```", _re.MULTILINE),                    # 代码块起始行
+    _re.compile(r"^\s*[-*+]\s+\S", _re.MULTILINE),         # 无序列表：- item / * item / + item
+    _re.compile(r"^\s*\d+\.\s+\S", _re.MULTILINE),         # 有序列表：1. item
+    _re.compile(r"^\s*>\s+\S", _re.MULTILINE),             # 引用：> text
+    _re.compile(r"\[.+?\]\(.+?\)"),                         # 链接：[text](url)
+    _re.compile(r"!\[.*?\]\(.+?\)"),                        # 图片：![alt](url)
+    _re.compile(r"^\|.*\|$", _re.MULTILINE),               # 表格行：| a | b |
+    _re.compile(r"^\s*---+\s*$", _re.MULTILINE),           # 分隔线：---
+]
+
+
+def _looks_like_markdown(text: str) -> bool:
+    """判断文本是否包含 Markdown 特征"""
+    return any(p.search(text) for p in _MD_PATTERNS)
 
 
 class YunhuMessageEvent(AstrMessageEvent):
+    """
+    云湖平台消息事件
+
+    通过 YunhuClient 直接调用 HTTP API 发送消息，
+    """
 
     def __init__(
         self,
@@ -43,284 +67,661 @@ class YunhuMessageEvent(AstrMessageEvent):
         message_obj: AstrBotMessage,
         platform_meta: PlatformMetadata,
         session_id: str,
-        ws: "aiohttp.ClientWebSocketResponse",
+        client: YunhuClient,
         recv_id: str,
         recv_type: str,
         parent_id: str = "",
+        dl_session: aiohttp.ClientSession = None,
     ):
-        super().__init__(message_str, message_obj, platform_meta, session_id)
-        self._ws = ws
+        super().__init__(
+            message_str=message_str,
+            message_obj=message_obj,
+            platform_meta=platform_meta,
+            session_id=session_id,
+        )
+        self._client = client
         self._recv_id = recv_id
         self._recv_type = recv_type
         self._parent_id = parent_id
+        self._dl_session = dl_session
 
-    async def _send_ws(self, payload: dict) -> bool:
-        if not self._ws or self._ws.closed:
-            logger.error(f"[云湖] WS 连接已断开，无法发送 | ws={self._ws} closed={getattr(self._ws, 'closed', 'N/A')}")
-            return False
-        try:
-            await self._ws.send_str(json.dumps(payload, ensure_ascii=False))
-            logger.debug(f"[云湖] WS 发送成功: {payload.get('action')}")
-            return True
-        except Exception as e:
-            logger.error(f"[云湖] WS 发送异常: {e}", exc_info=True)
-            return False
+    # 供 send_by_session 使用的类方法 
 
-    async def _send_with_retry(self, payload: dict, max_retries: int = 3) -> bool:
-        for attempt in range(max_retries):
-            success = await self._send_ws(payload)
-            if success:
-                return True
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.warning(f"[云湖] 重试 {attempt+1}/{max_retries}，等待 {wait_time}s")
-                await asyncio.sleep(wait_time)
-        logger.error(f"[云湖] 重试 {max_retries} 次后仍失败")
-        return False
+    @classmethod
+    async def send_message(
+        cls,
+        client: YunhuClient,
+        recv_id: str,
+        recv_type: str,
+        message_chain: MessageChain,
+        dl_session: aiohttp.ClientSession = None,
+        parent_id: str = "",
+    ):
+        """
+        在没有事件实例的情况下发送消息链到云湖平台。
 
-    @staticmethod
-    def _read_local_file_b64(path: str) -> Optional[tuple]:
-        """
-        读取本地文件并返回base64字符串, 文件名。
-        path 可以是 file:///xxx、file://xxx 或裸绝对/相对路径。
-        失败返回 None。
-        """
-        path = _normalize_local_path(path)
-        try:
-            with open(path, "rb") as f:
-                data = f.read()
-            b64 = base64.b64encode(data).decode("ascii")
-            filename = os.path.basename(path)
-            logger.info(f"[云湖] 本地文件读取成功: {path} ({len(data)} bytes)")
-            return b64, filename
-        except Exception as e:
-            logger.error(f"[云湖] 本地文件读取失败: {path}: {e}")
-            return None
+        此方法供 YunhuAdapter.send_by_session() 调用，用于处理
+        AstrBot 内置 Agent 工具（如 send_message_to_user）主动
+        发送消息的场景。
 
-    @staticmethod
-    def _parse_data_url(url: str) -> Optional[tuple]:
+        Args:
+            client: YunhuClient 实例
+            recv_id: 接收者 ID（用户 ID 或群组 ID）
+            recv_type: 接收者类型（"user" 或 "group"）
+            message_chain: 消息链
+            dl_session: 可复用的 aiohttp 会话，用于下载远程资源
+            parent_id: 父消息 ID，用于消息串回复
         """
-        解析 data:image/xxx;base64,XXXX 格式，返回base64字符串, 文件名。
-        失败返回 None。
-        """
-        try:
-            header, b64 = url.split(",", 1)
-            mime = header.split(";")[0].split(":")[1]   # image/png
-            ext_map = {
-                "image/png": ".png", "image/jpeg": ".jpg",
-                "image/gif": ".gif", "image/webp": ".webp",
-            }
-            suffix = ext_map.get(mime, ".png")
-            return b64, f"image{suffix}"
-        except Exception as e:
-            logger.error(f"[云湖] data URL 解析失败: {e}")
-            return None
+        from astrbot.api.platform import AstrBotMessage, MessageType
 
-    def _build_image_payload(self, url: str) -> Optional[dict]:
+        # 构造一个最小化的 AstrBotMessage，仅用于满足父类初始化要求
+        dummy_msg = AstrBotMessage()
+        dummy_msg.type = MessageType.FRIEND_MESSAGE
+        dummy_msg.self_id = ""
+        dummy_msg.session_id = recv_id
+        dummy_msg.message_id = ""
+        dummy_msg.sender = MessageMember(user_id=recv_id)
+        dummy_msg.message = []
+        dummy_msg.message_str = ""
+        dummy_msg.raw_message = {}
+
+        # 构造一个最小化的 PlatformMetadata
+        dummy_meta = PlatformMetadata(
+            name="yunhu",
+            description="云湖平台适配器",
+            id="yunhu",
+        )
+
+        # 创建轻量级事件实例
+        event = cls(
+            message_str="",
+            message_obj=dummy_msg,
+            platform_meta=dummy_meta,
+            session_id=recv_id,
+            client=client,
+            recv_id=recv_id,
+            recv_type=recv_type,
+            parent_id=parent_id,
+            dl_session=dl_session,
+        )
+
+        # 直接调用各组件的发送方法，跳过 super().send() 避免标记事件已处理
+        for comp in message_chain.chain:
+            if isinstance(comp, Plain):
+                await event._send_plain(comp)
+            elif isinstance(comp, Image):
+                await event._send_image(comp)
+            elif isinstance(comp, File):
+                await event._send_file(comp)
+            elif isinstance(comp, Video):
+                await event._send_video(comp)
+            elif isinstance(comp, Record):
+                await event._send_text("[语音消息]")
+
+    # 核心发送方法 
+
+    async def send(self, message: MessageChain):
         """
-        根据 url 类型构造 send_image 的 WS payload。
-        返回 None 表示无法处理（跳过）。
+        发送消息链到云湖平台。
+
+        处理逻辑：
+        1. 遍历消息链中的每个组件
+        2. 图片/文件/视频：先上传获取 key，再发送
+        3. 文本：检测是否为 Markdown，自动选择 contentType
+        4. 超长文本自动分段发送
+        """
+        for comp in message.chain:
+            if isinstance(comp, Plain):
+                await self._send_plain(comp)
+            elif isinstance(comp, Image):
+                await self._send_image(comp)
+            elif isinstance(comp, File):
+                await self._send_file(comp)
+            elif isinstance(comp, Video):
+                await self._send_video(comp)
+            elif isinstance(comp, Record):
+                # 云湖不支持语音消息，转为文本提示
+                await self._send_text("[语音消息]")
+        # 必须调用父类 send 方法，标记事件已处理，防止 LLM 重复响应
+        await super().send(message)
+
+    # 文本发送 
+
+    async def _send_plain(self, comp: Plain):
+        """发送文本组件，自动检测 Markdown"""
+        text = comp.text
+        if not text:
+            return
+
+        # 检查是否为本地图片路径
+        ext = os.path.splitext(text.strip())[-1].lower()
+        if ext in _IMAGE_EXTS and os.path.isfile(text.strip()):
+            await self._send_image(Image(file=text.strip()))
+            return
+
+        # 检测 Markdown
+        if _looks_like_markdown(text):
+            await self._send_markdown(text)
+        else:
+            await self._send_text(text)
+
+    async def _send_text(self, text: str):
+        """发送纯文本消息，超长自动分段"""
+        if not text:
+            return
+
+        # 按字节长度分段
+        chunks = _split_text(text, _MAX_TEXT_LEN)
+        for chunk in chunks:
+            resp = await self._client.send_text(
+                recv_id=self._recv_id,
+                recv_type=self._recv_type,
+                text=chunk,
+                parent_id=self._parent_id,
+            )
+            if not resp.ok:
+                logger.warning(f"[云湖] 文本发送失败: code={resp.code}, msg={resp.msg}")
+
+    async def _send_markdown(self, text: str):
+        """发送 Markdown 消息，超长自动分段"""
+        if not text:
+            return
+
+        chunks = _split_markdown(text, _MAX_TEXT_LEN)
+        for chunk in chunks:
+            resp = await self._client.send_markdown(
+                recv_id=self._recv_id,
+                recv_type=self._recv_type,
+                text=chunk,
+                parent_id=self._parent_id,
+            )
+            if not resp.ok:
+                logger.warning(f"[云湖] Markdown 发送失败: code={resp.code}, msg={resp.msg}")
+
+    # 图片发送 
+
+    async def _send_image(self, comp: Image):
+        """
+        发送图片消息。
 
         支持的格式：
           - data:image/xxx;base64,XXX  —— data URL
           - base64://XXXX              —— AstrBot 标准 base64 前缀格式
           - file:///path 或 /path      —— 本地文件路径
-          - http(s)://...              —— 远程 URL，由 SDK 侧下载后上传
-          - 裸 base64 字符串           —— 尝试解码，成功则作为 image_data 上传
+          - http(s)://...              —— 远程 URL，下载后上传
+          - 裸 base64 字符串           —— 尝试解码，成功则上传
           - 短字符串                   —— 视为云湖 CDN imageKey 直接发送
         """
-        payload = {
-            "action": "send_image",
-            "recv_id": self._recv_id,
-            "recv_type": self._recv_type,
-            "parent_id": self._parent_id,
-        }
-
-        if url.startswith("data:"):
-            # data:image/png;base64,XXX —— 直接提取 base64，避免触发 413
-            result = self._parse_data_url(url)
-            if not result:
-                return None
-            payload["image_data"], payload["filename"] = result
-
-        elif url.startswith("base64://"):
-            # 提取纯 base64 数据通过上传接口发送
-            b64_data = url[len("base64://"):]
-            # 补齐 padding
-            missing_padding = len(b64_data) % 4
-            if missing_padding:
-                b64_data += "=" * (4 - missing_padding)
-            payload["image_data"] = b64_data
-            payload["filename"] = "image.png"
-
-        elif url.startswith("file://") or url.startswith("/"):
-            # 本地文件（file:// 前缀 或 裸绝对路径）
-            local_path = _normalize_local_path(url)
-            result = self._read_local_file_b64(local_path)
-            if not result:
-                return None
-            payload["image_data"], payload["filename"] = result
-
-        elif url.startswith("http"):
-            # 远程 URL，让 SDK 侧下载再上传
-            payload["download_url"] = url
-
-        else:
-            # 如果是较长字符串，尝试作为裸 base64 解码，成功则通过上传接口发送，
-            # 避免将大量数据直接塞入 imageKey 字段发往 /bot/send 触发 413。
-            # 短字符串（≤200字符）才视为云湖 CDN imageKey，但这只是妥协办法。
-            if len(url) > 200:
-                import base64 as _b64
-                try:
-                    b64_data = url
-                    missing_padding = len(b64_data) % 4
-                    if missing_padding:
-                        b64_data += "=" * (4 - missing_padding)
-                    _b64.b64decode(b64_data, validate=True) 
-                    logger.info("[云湖] 检测到裸 base64 图片数据，将通过上传接口发送")
-                    payload["image_data"] = b64_data
-                    payload["filename"] = "image.png"
-                except Exception:
-                    logger.warning(f"[云湖] 无法识别的图片格式，作为 imageKey 尝试发送: {url[:60]}...")
-                    payload["image_key"] = url
-            else:
-                # 短字符串视为云湖 CDN imageKey
-                payload["image_key"] = url
-
-        return payload
-
-    async def send(self, message: MessageChain):
-        logger.info(
-            f"[云湖][诊断C] send() 被调用 | "
-            f"chain长度={len(message.chain)} "
-            f"recv={self._recv_type}:{self._recv_id} "
-            f"ws_exists={self._ws is not None} "
-            f"ws_closed={self._ws.closed if self._ws else 'N/A'}"
-        )
-
-        if not self._ws or self._ws.closed:
-            logger.error("[云湖][诊断C] WS 已断开，跳过发送")
-            await super().send(message)
+        url = comp.file if comp.file else (comp.url if comp.url else "")
+        if not url:
             return
 
-        sent_count = 0
-        for i, component in enumerate(message.chain):
-            logger.info(f"[云湖][诊断C] 处理第{i}个组件: {type(component).__name__}")
+        # data URL
+        if url.startswith("data:"):
+            b64_str, filename = self._parse_data_url(url)
+            if b64_str:
+                try:
+                    image_data = base64.b64decode(b64_str)
+                    image_key = await self._upload_image_data(image_data, filename)
+                    if image_key:
+                        await self._send_image_by_key(image_key)
+                except Exception as e:
+                    logger.error(f"[云湖] data URL 图片解码失败: {e}")
+            return
 
-            # Plain 文本
-            if isinstance(component, Plain):
-                text = component.text or ""
+        # base64:// 前缀
+        if url.startswith("base64://"):
+            b64_str = url[len("base64://"):]
+            try:
+                image_data = base64.b64decode(b64_str)
+                image_key = await self._upload_image_data(image_data, "image.png")
+                if image_key:
+                    await self._send_image_by_key(image_key)
+            except Exception as e:
+                logger.error(f"[云湖] base64 图片解码失败: {e}")
+            return
 
-                # 部分插件会把图片 data URL 或本地图片路径写进 Plain，
-                # 以文本直接发送会触发 413 或发出无意义内容，转为图片发送。
-                if text.startswith("data:image/"):
-                    logger.info("[云湖] Plain 中检测到 data URL，转为图片发送")
-                    payload = self._build_image_payload(text)
-                    if payload:
-                        if await self._send_with_retry(payload):
-                            sent_count += 1
-                    continue
+        # 本地文件路径
+        local_path = url
+        if url.startswith("file://"):
+            local_path = url[7:]
+        if os.path.isfile(local_path):
+            await self._send_image_by_file(local_path)
+            return
 
-                local_path = _normalize_local_path(text)
-                ext = os.path.splitext(local_path)[-1].lower()
-                if ext in _IMAGE_EXTS and os.path.exists(local_path):
-                    logger.info(f"[云湖] Plain 中检测到本地图片路径，转为图片发送: {local_path}")
-                    payload = self._build_image_payload(local_path)
-                    if payload:
-                        if await self._send_with_retry(payload):
-                            sent_count += 1
-                    continue
+        # HTTP(S) URL
+        if url.startswith("http://") or url.startswith("https://"):
+            # 远程 URL，下载后上传
+            path = await self._download_to_temp(url)
+            if path:
+                await self._send_image_by_file(path)
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+                return
 
-                # 普通文本分块发送，避免超长文本触发 413，开启了分段回复也不用管？
-                chunks = [text[j:j+_MAX_TEXT_LEN] for j in range(0, max(len(text), 1), _MAX_TEXT_LEN)]
-                for chunk_idx, chunk in enumerate(chunks):
-                    logger.info(f"[云湖][诊断C] 发送文本分块 {chunk_idx+1}/{len(chunks)}: {chunk[:60]!r}")
-                    if await self._send_with_retry({
-                        "action": "send_text",
-                        "recv_id": self._recv_id,
-                        "recv_type": self._recv_type,
-                        "content": chunk,
-                        "parent_id": self._parent_id,
-                    }):
-                        sent_count += 1
+            # 下载失败，尝试作为 imageKey 直接发送
+            await self._send_image_by_key(url)
+            return
 
-            # Image
-            elif isinstance(component, Image):
-                url = component.file or ""
-                payload = self._build_image_payload(url)
-                if payload is None:
-                    logger.error(f"[云湖] 图片构造 payload 失败，跳过: {url[:80]}")
-                    continue
-                if await self._send_with_retry(payload):
-                    sent_count += 1
+        # 裸 base64 字符串
+        try:
+            decoded = base64.b64decode(url, validate=True)
+            if decoded[:4] in (b"\x89PNG", b"\xff\xd8\xff", b"RIFF", b"GIF8"):
+                image_key = await self._upload_image_data(decoded, "image.png")
+                if image_key:
+                    await self._send_image_by_key(image_key)
+                return
+        except Exception:
+            pass
 
-            # File / Record
-            elif isinstance(component, (File, Record)):
-                file_url = getattr(component, "file", "") or ""
-                payload = {
-                    "action": "send_file",
-                    "recv_id": self._recv_id,
-                    "recv_type": self._recv_type,
-                    "parent_id": self._parent_id,
-                }
+        # 短字符串，视为 imageKey
+        await self._send_image_by_key(url)
 
-                if file_url.startswith("file://") or file_url.startswith("/"):
-                    result = self._read_local_file_b64(file_url)
-                    if result:
-                        payload["file_data"], payload["filename"] = result
-                    else:
-                        logger.error(f"[云湖] 文件读取失败，跳过: {file_url}")
-                        continue
-                elif file_url.startswith("http"):
-                    payload["download_url"] = file_url
+    async def _send_image_by_file(self, file_path: str):
+        """通过本地文件上传发送图片"""
+        resp = await self._client.upload_image(file_path)
+        if resp.ok and resp.data:
+            image_key = resp.data.get("imageKey", "")
+            if image_key:
+                await self._send_image_by_key(image_key)
+                return
+        logger.warning(f"[云湖] 图片上传失败: code={resp.code}, msg={resp.msg}")
+
+    async def _send_image_by_key(self, image_key: str):
+        """通过 imageKey 发送图片"""
+        resp = await self._client.send_image(
+            recv_id=self._recv_id,
+            recv_type=self._recv_type,
+            image_key=image_key,
+            parent_id=self._parent_id,
+        )
+        if not resp.ok:
+            logger.warning(f"[云湖] 图片发送失败: code={resp.code}, msg={resp.msg}")
+
+    async def _upload_image_data(
+        self, image_data: bytes, filename: str = "image.png"
+    ) -> Optional[str]:
+        """将图片二进制数据上传到云湖，返回 imageKey"""
+        try:
+            # 写入临时文件
+            fd, path = tempfile.mkstemp(suffix=os.path.splitext(filename)[-1])
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(image_data)
+                resp = await self._client.upload_image(path)
+                if resp.ok and resp.data:
+                    return resp.data.get("imageKey", "")
                 else:
-                    payload["file_key"] = file_url
+                    logger.warning(f"[云湖] 图片上传失败: code={resp.code}, msg={resp.msg}")
+                    return None
+            finally:
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"[云湖] 图片上传异常: {e}")
+            return None
 
-                if await self._send_with_retry(payload):
-                    sent_count += 1
+    # 文件发送 
 
-            # Video
-            elif isinstance(component, Video):
-                video_url = getattr(component, "file", "") or ""
-                payload = {
-                    "action": "send_video",
-                    "recv_id": self._recv_id,
-                    "recv_type": self._recv_type,
-                    "parent_id": self._parent_id,
-                }
+    async def _send_file(self, comp: File):
+        """
+        发送文件消息。
 
-                if video_url.startswith("file://") or video_url.startswith("/"):
-                    result = self._read_local_file_b64(video_url)
-                    if result:
-                        payload["video_data"], payload["filename"] = result
-                    else:
-                        logger.error(f"[云湖] 视频文件读取失败，跳过: {video_url}")
-                        continue
-                elif video_url.startswith("http"):
-                    payload["download_url"] = video_url
-                else:
-                    payload["video_key"] = video_url
+        支持的格式：
+          - 本地文件路径
+          - HTTP(S) URL（下载后上传）
+          - 云湖 CDN fileKey（直接发送）
+        """
+        url = comp.file if comp.file else (comp.url if comp.url else "")
+        if not url:
+            return
 
-                if await self._send_with_retry(payload):
-                    sent_count += 1
+        # 本地文件路径
+        local_path = url
+        if url.startswith("file://"):
+            local_path = url[7:]
+        if os.path.isfile(local_path):
+            await self._send_file_by_path(local_path)
+            return
 
-            else:
-                logger.debug(f"[云湖] 未处理组件: {type(component).__name__}")
+        # HTTP(S) URL
+        if url.startswith("http://") or url.startswith("https://"):
+            # 远程 URL，下载后上传
+            path = await self._download_to_temp(url)
+            if path:
+                await self._send_file_by_path(path)
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+                return
 
-        logger.info(f"[云湖][诊断C] send() 完成 | sent_count={sent_count}/{len(message.chain)}")
-        await super().send(message)
+            # 下载失败，尝试作为 fileKey 直接发送
+            await self._send_file_by_key(url)
+            return
+
+        # 短字符串，视为 fileKey
+        await self._send_file_by_key(url)
+
+    async def _send_file_by_path(self, file_path: str):
+        """通过本地文件上传发送文件"""
+        resp = await self._client.upload_file(file_path)
+        if resp.ok and resp.data:
+            file_key = resp.data.get("fileKey", "")
+            if file_key:
+                await self._send_file_by_key(file_key)
+                return
+        logger.warning(f"[云湖] 文件上传失败: code={resp.code}, msg={resp.msg}")
+
+    async def _send_file_by_key(self, file_key: str):
+        """通过 fileKey 发送文件"""
+        resp = await self._client.send_file(
+            recv_id=self._recv_id,
+            recv_type=self._recv_type,
+            file_key=file_key,
+            parent_id=self._parent_id,
+        )
+        if not resp.ok:
+            logger.warning(f"[云湖] 文件发送失败: code={resp.code}, msg={resp.msg}")
+
+    # 视频发送 
+
+    async def _send_video(self, comp: Video):
+        """
+        发送视频消息。
+
+        支持的格式：
+          - 本地文件路径
+          - HTTP(S) URL（下载后上传）
+          - 云湖 CDN videoKey（直接发送）
+        """
+        url = comp.file if comp.file else (comp.url if comp.url else "")
+        if not url:
+            return
+
+        # 本地文件路径
+        local_path = url
+        if url.startswith("file://"):
+            local_path = url[7:]
+        if os.path.isfile(local_path):
+            await self._send_video_by_path(local_path)
+            return
+
+        # HTTP(S) URL
+        if url.startswith("http://") or url.startswith("https://"):
+            # 远程 URL，下载后上传
+            path = await self._download_to_temp(url)
+            if path:
+                await self._send_video_by_path(path)
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+                return
+
+            # 下载失败，尝试作为 videoKey 直接发送
+            await self._send_video_by_key(url)
+            return
+
+        # 短字符串，视为 videoKey
+        await self._send_video_by_key(url)
+
+    async def _send_video_by_path(self, file_path: str):
+        """通过本地文件上传发送视频"""
+        resp = await self._client.upload_video(file_path)
+        if resp.ok and resp.data:
+            video_key = resp.data.get("videoKey", "")
+            if video_key:
+                await self._send_video_by_key(video_key)
+                return
+        logger.warning(f"[云湖] 视频上传失败: code={resp.code}, msg={resp.msg}")
+
+    async def _send_video_by_key(self, video_key: str):
+        """通过 videoKey 发送视频"""
+        resp = await self._client.send_video(
+            recv_id=self._recv_id,
+            recv_type=self._recv_type,
+            video_key=video_key,
+            parent_id=self._parent_id,
+        )
+        if not resp.ok:
+            logger.warning(f"[云湖] 视频发送失败: code={resp.code}, msg={resp.msg}")
+
+    # 高级功能 
+
+    async def recall_message(self, msg_id: str, chat_id: str = "", chat_type: str = "") -> ApiResponse:
+        """
+        撤回消息
+
+        Args:
+            msg_id: 要撤回的消息 ID
+            chat_id: 聊天 ID（群 ID 或用户 ID），不填则使用当前会话
+            chat_type: 聊天类型（group/user），不填则根据当前会话推断
+        """
+        if not chat_id:
+            chat_id = self._recv_id
+        if not chat_type:
+            chat_type = self._recv_type
+        return await self._client.recall_message(msg_id, chat_id, chat_type)
+
+    async def edit_message(
+        self, msg_id: str, content_type: str, content: dict
+    ) -> ApiResponse:
+        """
+        编辑已发送的消息
+
+        Args:
+            msg_id: 要编辑的消息 ID
+            content_type: 消息类型（text/markdown/image/file/video）
+            content: 消息内容字典
+        """
+        return await self._client.edit_message(
+            msg_id=msg_id,
+            recv_id=self._recv_id,
+            recv_type=self._recv_type,
+            content_type=content_type,
+            content=content,
+        )
+
+    async def set_board(
+        self,
+        content_type: str,
+        content: str,
+        member_id: str = "",
+        expire_time: int = 0,
+    ) -> ApiResponse:
+        """
+        设置用户看板
+
+        Args:
+            content_type: 看板内容类型（text/markdown）
+            content: 看板内容
+            member_id: 目标用户 ID，不填则针对当前会话用户
+            expire_time: 过期时间（秒），0 表示不过期
+        """
+        chat_id = self._recv_id
+        chat_type = self._recv_type
+        return await self._client.set_board(
+            chat_id=chat_id,
+            chat_type=chat_type,
+            content_type=content_type,
+            content=content,
+            member_id=member_id,
+            expire_time=expire_time,
+        )
+
+    async def dismiss_board(self, member_id: str = "") -> ApiResponse:
+        """取消用户看板"""
+        return await self._client.dismiss_board(
+            chat_id=self._recv_id,
+            chat_type=self._recv_type,
+            member_id=member_id,
+        )
+
+    async def send_with_buttons(
+        self,
+        text: str,
+        buttons: List[ButtonGroup],
+        content_type: str = "text",
+    ) -> ApiResponse:
+        """
+        发送带按钮的消息
+
+        Args:
+            text: 消息文本
+            buttons: 按钮组列表
+            content_type: 消息类型（text/markdown）
+        """
+        if content_type == "markdown":
+            return await self._client.send_markdown(
+                recv_id=self._recv_id,
+                recv_type=self._recv_type,
+                text=text,
+                parent_id=self._parent_id,
+                buttons=buttons,
+            )
+        else:
+            return await self._client.send_text(
+                recv_id=self._recv_id,
+                recv_type=self._recv_type,
+                text=text,
+                parent_id=self._parent_id,
+                buttons=buttons,
+            )
+
+    async def batch_send(
+        self,
+        recv_ids: list,
+        content_type: str,
+        content: dict,
+    ) -> ApiResponse:
+        """
+        批量发送消息
+
+        Args:
+            recv_ids: 接收者 ID 列表
+            content_type: 消息类型
+            content: 消息内容
+        """
+        return await self._client.batch_send(
+            recv_ids=recv_ids,
+            recv_type=self._recv_type,
+            content_type=content_type,
+            content=content,
+        )
+
+    # 辅助方法 
 
     @staticmethod
-    async def _download_tmp(url: str) -> Optional[str]:
-        import tempfile
+    def _parse_data_url(url: str) -> tuple:
+        """
+        解析 data URL，返回 (base64_data, filename)
+        """
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            # data:image/png;base64,XXXX
+            header, b64 = url.split(",", 1)
+            mime = header.split(":")[1].split(";")[0]  # image/png
+            suffix = mime.split("/")[-1]
+            if suffix == "jpeg":
+                suffix = "jpg"
+            return b64, f"image.{suffix}"
+        except Exception as e:
+            logger.error(f"[云湖] data URL 解析失败: {e}")
+            return None, "image.png"
+
+    async def _download_to_temp(self, url: str) -> Optional[str]:
+        """下载远程 URL 到临时文件，返回临时文件路径；失败返回 None"""
+        try:
+            session = self._dl_session or aiohttp.ClientSession()
+            own_session = self._dl_session is None
+            try:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"[云湖] 下载失败 status={resp.status}: {url[:80]}")
+                        return None
                     suffix = os.path.splitext(url.split("?")[0])[-1] or ".bin"
                     fd, path = tempfile.mkstemp(suffix=suffix)
                     with os.fdopen(fd, "wb") as f:
                         f.write(await resp.read())
-            return path
+                return path
+            finally:
+                if own_session:
+                    await session.close()
         except Exception as e:
             logger.error(f"[云湖] 下载失败 {url}: {e}")
             return None
+
+
+# 文本分段工具 
+
+def _split_text(text: str, max_len: int) -> list:
+    """
+    将超长文本按字节长度切割为多个分块，每块不超过 max_len 字节。
+    尽量在换行符处切割，保持句子完整。
+    """
+    if len(text.encode("utf-8")) <= max_len:
+        return [text]
+
+    chunks = []
+    lines = text.split("\n")
+    current = ""
+
+    for line in lines:
+        candidate = (current + "\n" + line) if current else line
+        if len(candidate.encode("utf-8")) <= max_len:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            # 单行超长，强制硬切
+            if len(line.encode("utf-8")) > max_len:
+                for i in range(0, len(line), max_len):
+                    chunks.append(line[i:i + max_len])
+                current = ""
+            else:
+                current = line
+
+    if current:
+        chunks.append(current)
+
+    return chunks if chunks else [text[:max_len]]
+
+
+def _split_markdown(text: str, max_len: int) -> list:
+    """
+    将超长 Markdown 文本按段落边界（空行）切割为多个分块，
+    每块不超过 max_len 字节，尽量保持段落完整不被截断。
+
+    如果单个段落本身超过 max_len，则按 max_len 强制截断（不可避免）。
+    返回非空字符串列表。
+    """
+    paragraphs = text.split("\n\n")
+    chunks = []
+    current = ""
+
+    for para in paragraphs:
+        # 单段落超过上限，强制硬切
+        if len(para) > max_len:
+            if current:
+                chunks.append(current.rstrip())
+                current = ""
+            for i in range(0, len(para), max_len):
+                chunks.append(para[i:i + max_len])
+            continue
+
+        candidate = (current + "\n\n" + para) if current else para
+        if len(candidate) <= max_len:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current.rstrip())
+            current = para
+
+    if current:
+        chunks.append(current.rstrip())
+
+    return chunks if chunks else [text[:max_len]]

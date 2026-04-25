@@ -1,28 +1,59 @@
 {
-  "ws_url": {
-    "description": "云湖 SDK WebSocket 地址",
-    "type": "string",
-    "hint": "SDK 启动后暴露的 WS 桥接地址，例如 ws://127.0.0.1:8080/ws",
-    "obvious_hint": true,
-    "default": "ws://127.0.0.1:8080/ws"
-  },
-  "ws_token": {
-    "description": "WebSocket 鉴权 Token",
-    "type": "string",
-    "hint": "与 SDK 启动参数 --ws-token 保持一致，不需要鉴权则留空",
-    "default": ""
-  },
   "bot_token": {
     "description": "云湖机器人 Bot Token",
     "type": "string",
-    "hint": "从云湖官网控制台获取的机器人 Token，用于下载用户发来的图片/文件/视频。不填则 AstrBot 无法处理媒体消息。",
+    "hint": "从云湖官网控制台获取的机器人 Token，用于调用 API 和下载媒体资源。必填。",
     "obvious_hint": true,
     "default": ""
+  },
+  "connection_mode": {
+    "description": "连接模式（webhook / websocket）",
+    "type": "string",
+    "hint": "与云湖平台的连接方式。websocket：主动连接云湖 WebSocket 服务，无需公网 IP，推荐使用；webhook：在本地启动 HTTP 服务接收推送，需要公网 IP 或内网穿透。",
+    "obvious_hint": true,
+    "default": "websocket"
+  },
+  "webhook_host": {
+    "description": "Webhook 监听地址",
+    "type": "string",
+    "hint": "云湖平台推送事件的 HTTP 监听地址，一般填 0.0.0.0 即可。需确保云湖平台能访问到此地址。仅在 webhook 模式下生效。",
+    "default": "0.0.0.0"
+  },
+  "webhook_port": {
+    "description": "Webhook 监听端口",
+    "type": "int",
+    "hint": "云湖平台推送事件的 HTTP 监听端口。需确保端口未被占用且云湖平台能访问到此端口。仅在 webhook 模式下生效。",
+    "default": 6195
+  },
+  "webhook_path": {
+    "description": "Webhook 路径",
+    "type": "string",
+    "hint": "云湖平台推送事件的 URL 路径，例如 /webhook。需与云湖官网控制台配置的回调地址一致。仅在 webhook 模式下生效。",
+    "default": "/webhook"
+  },
+  "websocket_url": {
+    "description": "WebSocket 服务地址",
+    "type": "string",
+    "hint": "云湖 WebSocket 订阅地址，默认 wss://ws.jwzhd.com/subscribe。仅在 websocket 模式下生效。",
+    "default": "wss://ws.jwzhd.com/subscribe"
   },
   "reply_in_thread": {
     "description": "以线程方式回复消息",
     "type": "bool",
     "hint": "开启后回复会带上 parentId，将在原消息下方显示为子消息（线程）",
     "default": false
+  },
+  "media_ttl": {
+    "description": "临时媒体缓存时间（秒）",
+    "type": "int",
+    "hint": "从云湖 CDN 下载的图片/文件/视频在本地缓存的时间，过期后自动清理。默认 600 秒（10 分钟）。",
+    "default": 600
+  },
+  "custom_cdn_proxy": {
+    "description": "自定义 CDN 反代地址",
+    "type": "string",
+    "hint": "自建 CDN 反向代理的基础地址，如 https://yhcdn.yunhucdn.top。插件会自动拼接 /{类型}/{key}（类型为 image/video/file/audio）。留空则不使用自定义反代，仅依赖内置反代和备用反代。",
+    "obvious_hint": false,
+    "default": "https://yhcdn.yunhucdn.top"
   }
 }
