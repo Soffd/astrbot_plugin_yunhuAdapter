@@ -6,10 +6,22 @@
     "obvious_hint": true,
     "default": ""
   },
+  "bot_id": {
+    "description": "云湖机器人 ID",
+    "type": "string",
+    "hint": "填写云湖机器人真实数字ID，以识别群聊@机器人。留空时需要先私聊机器人自动识别；仅收群消息无法推断机器人ID。不要填写 Token、yunhu_开头占位ID或其哈希部分。",
+    "default": ""
+  },
+  "webhook_secret": {
+    "description": "Webhook 访问密钥（可选）",
+    "type": "string",
+    "hint": "配置后在云湖回调 URL 后添加 ?secret=密钥，也可通过 X-Yunhu-Secret 请求头传入。留空时不校验。",
+    "default": ""
+  },
   "connection_mode": {
     "description": "连接模式（webhook / websocket）",
     "type": "string",
-    "hint": "与云湖平台的连接方式。websocket：主动连接云湖 WebSocket 服务，无需公网 IP，推荐使用；webhook：在本地启动 HTTP 服务接收推送，需要公网 IP 或内网穿透。",
+    "hint": "webhook：按云湖 v2 文档通过 HTTP POST 接收事件，需要公网回调或内网穿透。websocket：沿用旧版订阅方式，无需公网 IP，实际地址和可用性需确认。",
     "obvious_hint": true,
     "default": "websocket"
   },
@@ -34,20 +46,44 @@
   "websocket_url": {
     "description": "WebSocket 服务地址",
     "type": "string",
-    "hint": "云湖 WebSocket 订阅地址，默认 wss://ws.jwzhd.com/subscribe。仅在 websocket 模式下生效。",
+    "hint": "完整的 ws:// 或 wss:// 订阅地址；留空自动使用 wss://ws.jwzhd.com/subscribe。无需手动拼接 Token。仅在 websocket 模式下生效。",
     "default": "wss://ws.jwzhd.com/subscribe"
   },
   "reply_in_thread": {
     "description": "以线程方式回复消息",
     "type": "bool",
-    "hint": "开启后回复会带上 parentId，将在原消息下方显示为子消息（线程）",
+    "hint": "开启后回复带上 parentId。云湖流式接口未提供 parentId，因此线程回复使用普通消息发送。",
     "default": false
   },
   "media_ttl": {
     "description": "临时媒体缓存时间（秒）",
     "type": "int",
-    "hint": "从云湖 CDN 下载的图片/文件/视频在本地缓存的时间，过期后自动清理。默认 600 秒（10 分钟）。",
+    "hint": "尚未交给 AstrBot 事件的媒体缓存过期时间。已交给事件的附件在事件结束后清理，不会在处理期间被 TTL 删除。默认 600 秒。",
     "default": 600
+  },
+  "file_retention_days": {
+    "description": "接收文件默认保留天数",
+    "type": "int",
+    "hint": "文件保留副本默认保存7天，重启后可继续使用；0关闭自动保留。长期保留文件不按时间过期，但仍占容量。图片、音视频继续临时处理。",
+    "default": 7
+  },
+  "file_store_max_mb": {
+    "description": "每个平台实例文件库容量（MiB）",
+    "type": "int",
+    "hint": "默认512MiB，超出时按接收时间清理最早的非长期保留文件。长期保留文件占满时新文件只临时处理并提示；不会自动删除长期保留文件。",
+    "default": 512
+  },
+  "file_store_max_count": {
+    "description": "每个平台实例最多保留文件数",
+    "type": "int",
+    "hint": "默认1000，包含长期保留文件，用于限制大量空文件和索引记录。",
+    "default": 1000
+  },
+  "file_store_dir": {
+    "description": "文件库保存目录（可选）",
+    "type": "string",
+    "hint": "留空使用AstrBot data/plugin_data/astrbot_plugin_yunhuAdapter/files；可指定持久化磁盘目录，内部按平台实例隔离。",
+    "default": ""
   },
   "custom_cdn_proxy": {
     "description": "自定义 CDN 反代地址",
