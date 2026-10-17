@@ -82,7 +82,7 @@
   "file_store_dir": {
     "description": "文件库保存目录（可选）",
     "type": "string",
-    "hint": "留空使用AstrBot data/plugin_data/astrbot_plugin_yunhuAdapter/files；可指定持久化磁盘目录，内部按平台实例隔离。",
+    "hint": "留空使用AstrBot data/plugin_data/astrbot_plugin_yunhuAdapter/files；自定义相对路径以该插件数据目录为基准，绝对路径也必须位于该目录内，内部按平台实例隔离。原先使用外部目录时请先迁移文件库再修改配置。",
     "default": ""
   },
   "custom_cdn_proxy": {

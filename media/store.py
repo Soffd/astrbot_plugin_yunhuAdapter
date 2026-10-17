@@ -29,7 +29,10 @@ class FileStore:
         self._now = clock or time.time
         self._lock = threading.RLock()
         instance = hashlib.sha256(str(instance_id).encode()).hexdigest()[:24]
-        self.base_dir = (Path(base_dir) / instance).resolve()
+        root = Path(base_dir).resolve()
+        self.base_dir = (root / instance).resolve()
+        if not self.base_dir.is_relative_to(root):
+            raise ValueError("文件库实例路径超出保存目录")
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.index_path = self.base_dir / "index.sqlite3"
         with self._db() as db:
@@ -307,6 +310,28 @@ def default_store_directory():
     except ImportError:
         data = Path.cwd() / "data"
     return data / "plugin_data" / "astrbot_plugin_yunhuAdapter" / "files"
+
+
+def resolve_store_directory(configured):
+    """自定义路径相对于插件数据目录，并在解析链接后校验边界。"""
+    default = default_store_directory()
+    root = default.parent.resolve()
+    if configured is None:
+        configured = ""
+    if not isinstance(configured, str):
+        raise ValueError("file_store_dir 必须为字符串，留空使用默认文件库")
+    configured = configured.strip()
+    directory = Path(configured) if configured else default
+    if configured and not directory.is_absolute():
+        directory = root / directory
+    directory = directory.resolve()
+    if not directory.is_relative_to(root):
+        raise ValueError(
+            "file_store_dir 必须位于插件数据目录 "
+            "data/plugin_data/astrbot_plugin_yunhuAdapter 下；"
+            "请先迁移原有文件库，再修改配置"
+        )
+    return directory
 
 
 def event_store(event):

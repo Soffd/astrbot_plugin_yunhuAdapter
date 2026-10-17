@@ -1,7 +1,6 @@
 """异步直连云湖开放 API，不重试可能产生重复消息的写操作。"""
 
 import asyncio
-import logging
 import os
 import re
 import time
@@ -9,11 +8,11 @@ from collections import defaultdict, deque
 from typing import Optional
 
 import aiohttp
+from astrbot.api import logger
 
 from ..media.names import safe_filename
 from .models import ApiResponse, ButtonGroup
 
-logger = logging.getLogger("yunhu.client")
 BASE_URL = "https://chat-go.jwzhd.com/open-apis/v1"
 
 

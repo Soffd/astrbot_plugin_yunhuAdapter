@@ -30,7 +30,7 @@ def module(name):
 
 for name in ("astrbot", "astrbot.api", "astrbot.core", "astrbot.core.platform"):
     module(name)
-sys.modules["astrbot"].logger = logging.getLogger("astrbot.test")
+sys.modules["astrbot.api"].logger = logging.getLogger("astrbot.test")
 platform_api = module("astrbot.api.platform")
 event_api = module("astrbot.api.event")
 components = module("astrbot.api.message_components")
@@ -307,6 +307,10 @@ def adapter_factory(tmp_path, monkeypatch):
             super().__init__(str(tmp_path / f"media-{count}"), ttl)
 
     monkeypatch.setattr(adapter_module, "TempFileManager", TestTempFileManager)
+    monkeypatch.setattr(
+        "yunhu_plugin.media.store.default_store_directory",
+        lambda: tmp_path / "plugin-data" / "files",
+    )
 
     def create(**config):
         import asyncio
@@ -316,7 +320,7 @@ def adapter_factory(tmp_path, monkeypatch):
                 "bot_token": "test-secret-token",
                 "id": "yunhu-1",
                 "bot_id": "bot-1",
-                "file_store_dir": str(tmp_path / "saved-files"),
+                "file_store_dir": "saved-files",
                 **config,
             },
             {},

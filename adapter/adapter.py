@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from aiohttp import web
-from astrbot import logger
+from astrbot.api import logger
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import At, File, Image, Plain, Record, Reply, Video
 from astrbot.api.platform import (
@@ -37,7 +37,7 @@ from ..api.models import (
 )
 from ..media.cdn import CdnProxy, DownloadedMedia
 from ..media.names import header_filename, received_filename
-from ..media.store import FileStore, default_store_directory
+from ..media.store import FileStore, resolve_store_directory
 from ..media.temp_files import TempFileManager
 from .config import CONFIG_METADATA, DEFAULT_CONFIG
 from .event import YunhuMessageEvent
@@ -88,6 +88,7 @@ class YunhuAdapter(Platform):
         self.reply_in_thread = config["reply_in_thread"]
         self.media_ttl = max(1, int(config["media_ttl"]))
         self.custom_cdn_proxy = config["custom_cdn_proxy"]
+        file_store_dir = resolve_store_directory(config["file_store_dir"])
         # Token 不能进入 AstrBotMessage、日志或会话标识。
         self.client_self_id = self.bot_id
         self._client = YunhuClient(self.bot_token)
@@ -98,7 +99,7 @@ class YunhuAdapter(Platform):
         if retention < 0 or capacity < 1 or count < 1:
             raise ValueError("file_retention_days必须非负，文件库容量和数量必须大于0")
         self._file_store = FileStore(
-            config["file_store_dir"] or default_store_directory(),
+            file_store_dir,
             config.get("id") or self.bot_token,
             retention_days=retention,
             max_bytes=capacity * 1024 * 1024,

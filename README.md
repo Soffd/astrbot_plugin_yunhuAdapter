@@ -48,8 +48,10 @@
 | `file_retention_days` | `7` | 接收文件自动保留天数；0关闭自动保留 |
 | `file_store_max_mb` | `512` | 每个平台实例保留文件内容的容量上限，单位MiB |
 | `file_store_max_count` | `1000` | 每个平台实例最多保留多少个文件，包含空文件和长期保留文件 |
-| `file_store_dir` | 空 | 留空使用AstrBot数据目录下的插件文件库；可指定持久化磁盘目录 |
+| `file_store_dir` | 空 | 留空使用 `data/plugin_data/astrbot_plugin_yunhuAdapter/files`；相对路径基于本插件数据目录，绝对路径也必须在该目录内（解析符号链接后校验） |
 | `custom_cdn_proxy` | 空 | 可选的自建 CDN 反代地址；留空禁用此级回退 |
+
+升级前若使用外部文件库目录，请先停止对应平台实例，将原目录的完整内容（含实例子目录和 `index.sqlite3`）迁移到 `data/plugin_data/astrbot_plugin_yunhuAdapter/files`，再清空 `file_store_dir` 并重启实例。也可迁移至本插件数据目录内的其他子目录并填写对应相对路径，例如 `archive`。外部路径会在启动时被拒绝，不会自动搬移或删除原文件。
 
 云湖 v2 文档明确说明了 HTTP POST 事件订阅方式，建议使用 Webhook 接入。WebSocket 模式沿用本项目旧版本实现；本次仅验证了本地协议处理，云湖实际订阅地址和可用性需要用你的机器人确认。
 

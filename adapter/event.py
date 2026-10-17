@@ -1,11 +1,11 @@
 """AstrBot 消息链发送与云湖事件辅助 API。"""
 
-import logging
 import os
 import re
 from pathlib import Path
 
 import aiohttp
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import (
     At,
@@ -29,7 +29,6 @@ from ..api.client import YunhuClient, ensure_success
 from ..api.models import ApiResponse, ButtonGroup
 from ..media.names import safe_filename
 
-logger = logging.getLogger("yunhu.event")
 _MAX_TEXT_LEN = 3500
 _MD_PATTERNS = [
     re.compile(r"^#{1,6}\s+\S", re.MULTILINE),

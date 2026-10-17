@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- 统一从 `astrbot.api` 导入日志记录器，移除插件中的标准 logging 和日志降级逻辑。
+- 自定义文件库路径限制在 `data/plugin_data/astrbot_plugin_yunhuAdapter` 内，相对路径基于该目录，拒绝目录穿越及链接越界；已有外部文件库需先迁移后修改配置。
+
 ## 2.5.0
 
 - 新增 AstrBot 插件可视化管理页「云湖控制台」，使用官方Pages/Views bridge与Dashboard扩展API，最低支持AstrBot v4.28.2。

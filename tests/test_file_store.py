@@ -5,10 +5,82 @@ from unittest.mock import AsyncMock
 
 import pytest
 from astrbot.api.message_components import File, Plain
+from yunhu_plugin.media import store as store_module
 from yunhu_plugin.media.attachments import read_attachment
-from yunhu_plugin.media.store import FileStore
+from yunhu_plugin.media.store import FileStore, resolve_store_directory
 from yunhu_plugin.services.llm_inputs import enrich_yunhu_inputs
 from yunhu_plugin.services.operations import YunhuOperations, parse_command
+
+
+@pytest.mark.parametrize("configured", ["", "   ", None, "archive", "files/2026"])
+def test_configured_store_stays_in_plugin_data(tmp_path, monkeypatch, configured):
+    root = tmp_path / "data" / "plugin_data" / "astrbot_plugin_yunhuAdapter"
+    monkeypatch.setattr(store_module, "default_store_directory", lambda: root / "files")
+    monkeypatch.chdir(tmp_path)
+    expected = root / (
+        configured.strip() if configured and configured.strip() else "files"
+    )
+    assert resolve_store_directory(configured) == expected.resolve()
+    assert resolve_store_directory(str(expected.resolve())) == expected.resolve()
+    assert not root.exists()  # 路径校验本身不创建目录。
+
+
+@pytest.mark.parametrize("configured", ["../outside", "../../outside", 123, []])
+def test_configured_store_rejects_invalid_or_escaping_paths(
+    tmp_path, monkeypatch, configured
+):
+    root = tmp_path / "plugin-data"
+    monkeypatch.setattr(store_module, "default_store_directory", lambda: root / "files")
+    with pytest.raises(ValueError, match="file_store_dir"):
+        resolve_store_directory(configured)
+    assert not root.exists()
+
+
+def test_adapter_rejects_absolute_external_store(adapter_factory, tmp_path):
+    external = tmp_path / "plugin-data-other" / "files"
+    with pytest.raises(ValueError, match="file_store_dir"):
+        adapter_factory(file_store_dir=str(external))
+    assert not external.exists()
+
+
+@pytest.mark.asyncio
+async def test_adapter_uses_default_store_inside_plugin_data(adapter_factory, tmp_path):
+    adapter = adapter_factory(file_store_dir="")
+    assert adapter._file_store.base_dir.parent == (tmp_path / "plugin-data" / "files")
+    await adapter.terminate()
+
+
+def directory_link(link, target):
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"当前环境无法创建目录符号链接: {error}")
+
+
+def test_configured_store_rejects_symlink_escape(tmp_path, monkeypatch):
+    root = tmp_path / "plugin-data"
+    root.mkdir()
+    external = tmp_path / "outside"
+    external.mkdir()
+    directory_link(root / "escape", external)
+    monkeypatch.setattr(store_module, "default_store_directory", lambda: root / "files")
+    with pytest.raises(ValueError, match="file_store_dir"):
+        resolve_store_directory("escape/nested")
+    assert list(external.iterdir()) == []
+
+
+def test_store_rejects_instance_directory_symlink_escape(tmp_path):
+    root = tmp_path / "store"
+    store = FileStore(root, "instance")
+    instance = store.base_dir.name
+    store.index_path.unlink()
+    store.base_dir.rmdir()
+    external = tmp_path / "outside"
+    external.mkdir()
+    directory_link(root / instance, external)
+    with pytest.raises(ValueError, match="实例路径"):
+        FileStore(root, "instance")
+    assert list(external.iterdir()) == []
 
 
 def create_store(tmp_path, now, **kwargs):

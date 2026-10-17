@@ -2,7 +2,6 @@
 
 import asyncio
 import copy
-import logging
 import re
 import shutil
 import sqlite3
@@ -11,6 +10,7 @@ import zipfile
 from functools import wraps
 from xml.etree import ElementTree
 
+from astrbot.api import logger
 from astrbot.api.platform import AstrBotMessage, MessageMember, MessageType
 from astrbot.api.web import error_response, file_response, json_response, request
 
@@ -19,7 +19,6 @@ from ..media.attachments import _read_text
 from ..services.operations import ACTIONS, GLOBAL_ACTIONS
 
 PLUGIN_NAME = "astrbot_plugin_yunhuAdapter"
-logger = logging.getLogger("yunhu.web")
 EDITABLE = {
     "file_retention_days",
     "file_store_max_mb",

@@ -4,7 +4,7 @@ import asyncio
 import json
 import sqlite3
 
-from astrbot import logger
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import At
 

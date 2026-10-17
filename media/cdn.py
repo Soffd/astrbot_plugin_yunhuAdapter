@@ -18,11 +18,11 @@
 """
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
+from astrbot.api import logger
 
 from .names import header_filename
 
@@ -31,13 +31,6 @@ from .names import header_filename
 class DownloadedMedia:
     data: bytes
     filename: str = ""
-
-
-# 尝试从 astrbot 获取 logger，降级到标准 logging
-try:
-    from astrbot import logger as _logger
-except ImportError:
-    _logger = logging.getLogger("yunhu.cdn_proxy")
 
 
 # 云湖 CDN 域名映射（内置反代用）
@@ -145,23 +138,23 @@ class CdnProxy:
         # 内置反代
         data = await self._download_builtin(key, kind, with_metadata=with_metadata)
         if data is not None:
-            _logger.info("[云湖] 内置反代下载成功: %s/%s", kind, _truncate_key(key))
+            logger.info("[云湖] 内置反代下载成功: %s/%s", kind, _truncate_key(key))
             return data
 
         # 自定义反代
         data = await self._download_custom(key, kind, with_metadata=with_metadata)
         if data is not None:
-            _logger.info("[云湖] 自定义反代下载成功: %s/%s", kind, _truncate_key(key))
+            logger.info("[云湖] 自定义反代下载成功: %s/%s", kind, _truncate_key(key))
             return data
 
         # 备用反代（仅图片）
         if kind == "image":
             data = await self._download_backup_image(key)
             if data is not None:
-                _logger.info("[云湖] 备用反代下载成功: image/%s", _truncate_key(key))
+                logger.info("[云湖] 备用反代下载成功: image/%s", _truncate_key(key))
                 return data
 
-        _logger.warning("[云湖] 所有下载方式均失败: %s/%s", kind, _truncate_key(key))
+        logger.warning("[云湖] 所有下载方式均失败: %s/%s", kind, _truncate_key(key))
         return None
 
     # 内置反代
@@ -172,7 +165,7 @@ class CdnProxy:
         """
         route = _CDN_ROUTES.get(kind)
         if not route:
-            _logger.debug("[云湖] 内置反代不支持的资源类型: %s", kind)
+            logger.debug("[云湖] 内置反代不支持的资源类型: %s", kind)
             return None
 
         url = route["base_url"] + "/" + key
@@ -188,7 +181,7 @@ class CdnProxy:
             timeout = aiohttp.ClientTimeout(total=_BUILTIN_TIMEOUT)
             async with self._session.get(url, headers=headers, timeout=timeout) as resp:
                 if resp.status != 200:
-                    _logger.debug(
+                    logger.debug(
                         "[云湖] 内置反代下载失败 status=%s: %s",
                         resp.status,
                         _truncate_url(url),
@@ -199,7 +192,7 @@ class CdnProxy:
 
                 # HTML 也是合法文件附件，不能把其正文当作 CDN 错误页。
                 if kind != "file" and _is_html_response(data):
-                    _logger.debug(
+                    logger.debug(
                         "[云湖] 内置反代返回 HTML 页面: %s", _truncate_url(url)
                     )
                     return None
@@ -211,10 +204,10 @@ class CdnProxy:
                 )
 
         except asyncio.TimeoutError:
-            _logger.debug("[云湖] 内置反代下载超时: %s", _truncate_url(url))
+            logger.debug("[云湖] 内置反代下载超时: %s", _truncate_url(url))
             return None
         except Exception as e:
-            _logger.debug("[云湖] 内置反代下载异常: %s - %s", _truncate_url(url), e)
+            logger.debug("[云湖] 内置反代下载异常: %s - %s", _truncate_url(url), e)
             return None
 
     # 自定义反代
@@ -240,7 +233,7 @@ class CdnProxy:
             timeout = aiohttp.ClientTimeout(total=_CUSTOM_TIMEOUT)
             async with self._session.get(url, headers=headers, timeout=timeout) as resp:
                 if resp.status != 200:
-                    _logger.debug(
+                    logger.debug(
                         "[云湖] 自定义反代下载失败 status=%s: %s",
                         resp.status,
                         _truncate_url(url),
@@ -250,7 +243,7 @@ class CdnProxy:
                 data = await resp.read()
 
                 if kind != "file" and _is_html_response(data):
-                    _logger.debug(
+                    logger.debug(
                         "[云湖] 自定义反代返回 HTML 页面: %s", _truncate_url(url)
                     )
                     return None
@@ -262,10 +255,10 @@ class CdnProxy:
                 )
 
         except asyncio.TimeoutError:
-            _logger.debug("[云湖] 自定义反代下载超时: %s", _truncate_url(url))
+            logger.debug("[云湖] 自定义反代下载超时: %s", _truncate_url(url))
             return None
         except Exception as e:
-            _logger.debug("[云湖] 自定义反代下载异常: %s - %s", _truncate_url(url), e)
+            logger.debug("[云湖] 自定义反代下载异常: %s - %s", _truncate_url(url), e)
             return None
 
     # 备用反代（仅图片）
@@ -290,7 +283,7 @@ class CdnProxy:
             timeout = aiohttp.ClientTimeout(total=_BACKUP_TIMEOUT)
             async with self._session.get(url, headers=headers, timeout=timeout) as resp:
                 if resp.status != 200:
-                    _logger.debug(
+                    logger.debug(
                         "[云湖] 备用反代下载失败 status=%s: %s",
                         resp.status,
                         _truncate_url(url),
@@ -300,7 +293,7 @@ class CdnProxy:
                 data = await resp.read()
 
                 if _is_html_response(data):
-                    _logger.debug(
+                    logger.debug(
                         "[云湖] 备用反代返回 HTML 页面: %s", _truncate_url(url)
                     )
                     return None
@@ -308,10 +301,10 @@ class CdnProxy:
                 return data
 
         except asyncio.TimeoutError:
-            _logger.debug("[云湖] 备用反代下载超时: %s", _truncate_url(url))
+            logger.debug("[云湖] 备用反代下载超时: %s", _truncate_url(url))
             return None
         except Exception as e:
-            _logger.debug("[云湖] 备用反代下载异常: %s - %s", _truncate_url(url), e)
+            logger.debug("[云湖] 备用反代下载异常: %s - %s", _truncate_url(url), e)
             return None
 
 
