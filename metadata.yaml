@@ -1,5 +1,6 @@
 name: astrbot_plugin_yunhuAdapter
 author: Yuki Soffd
 description: 将 AstrBot 接入云湖机器人平台，支持 Webhook/WebSocket、流式消息、群管理指令与 Agent Tools。
-version: 2.4.0
+version: 2.5.0
+astrbot_version: ">=4.28.2"
 repo: https://github.com/Soffd/astrbot_plugin_yunhuAdapter

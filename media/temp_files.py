@@ -94,6 +94,26 @@ class TempFileManager:
         except OSError:
             pass
 
+    def discard(self, path):
+        """仅释放本管理器登记的文件，用于页面下载快照的响应结束清理。"""
+        for token, (recorded, _) in list(self._file_records.items()):
+            if path != recorded:
+                continue
+            try:
+                os.unlink(recorded)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return
+            self._file_records.pop(token, None)
+            self._remove_empty_parent(recorded)
+            if self.closed:
+                try:
+                    os.rmdir(self.base_dir)
+                except OSError:
+                    pass
+            return
+
     def _remove_empty_parent(self, path):
         parent = os.path.dirname(path)
         if parent != self.base_dir:

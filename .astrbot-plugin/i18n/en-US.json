@@ -1,0 +1,8 @@
+{
+  "pages": {
+    "manager": {"title": "Yunhu Console", "description": "Manage saved files, retention settings and bot operations."}
+  },
+  "views": {
+    "manager": {"title": "Yunhu Console", "description": "Manage saved files, retention settings and bot operations."}
+  }
+}

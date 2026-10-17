@@ -130,14 +130,11 @@ class YunhuClient:
                     1002, f"{field_name} 上传超过 {limit // 1024 // 1024}MB 上限"
                 )
             with open(file_path, "rb") as file:
-                # 云湖会原样保存multipart的filename；默认quote_fields会把中文变成%XX。
-                form = aiohttp.FormData(quote_fields=False)
+                form = aiohttp.FormData()
                 form.add_field(
                     field_name,
                     file,
-                    filename=safe_filename(
-                        filename or os.path.basename(file_path), decode=True
-                    ),
+                    filename=safe_filename(filename or os.path.basename(file_path)),
                     content_type="application/octet-stream",
                 )
                 return await self._request(

@@ -312,7 +312,6 @@ class YunhuMessageEvent(AstrMessageEvent):
                     path,
                     filename=safe_filename(
                         getattr(component, "name", "") or os.path.basename(path),
-                        decode=True,
                     ),
                 )
             ensure_success(response)

@@ -1,0 +1,8 @@
+{
+  "pages": {
+    "manager": {"title": "云湖控制台", "description": "管理保留文件、保存策略和云湖机器人功能。"}
+  },
+  "views": {
+    "manager": {"title": "云湖控制台", "description": "管理保留文件、保存策略和云湖机器人功能。"}
+  }
+}

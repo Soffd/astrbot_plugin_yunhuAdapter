@@ -13,7 +13,7 @@ from .services.operations import HELP, YunhuOperations, parse_command
     "astrbot_plugin_yunhuAdapter",
     "Yuki Soffd",
     "云湖平台适配器，支持消息、群管理指令与 Agent Tools",
-    "2.4.0",
+    "2.5.0",
 )
 class YunhuPlugin(Star):
     def __init__(self, context: Context):
@@ -21,6 +21,16 @@ class YunhuPlugin(Star):
         from .adapter.adapter import YunhuAdapter  # noqa: F401
 
         self.operations = YunhuOperations()
+        self.page_api = None
+        if context is not None:
+            from .web.api import YunhuPageAPI
+
+            self.page_api = YunhuPageAPI(context, self.operations)
+            self.page_api.register()
+
+    async def terminate(self):
+        if self.page_api:
+            self.page_api.unregister()
 
     async def _tool(self, event, operation, **arguments):
         result = await self.operations.execute(event, operation, **arguments)

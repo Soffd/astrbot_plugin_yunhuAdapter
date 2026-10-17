@@ -1,5 +1,6 @@
 import asyncio
 import time
+from urllib.parse import quote
 
 import pytest
 import pytest_asyncio
@@ -209,14 +210,14 @@ async def test_upload_size_limit_before_network(api_server, tmp_path):
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("规定.md", "规定.md"),
-        ("测试 文档+100%.md", "测试 文档+100%.md"),
+        ("规定.md", quote("规定.md", safe="")),
+        ("测试 文档+100%.md", quote("测试 文档+100%.md", safe="")),
         ("test.md", "test.md"),
-        ("%E8%A7%84%E5%AE%9A.md", "规定.md"),
+        ("%E8%A7%84%E5%AE%9A.md", quote("%E8%A7%84%E5%AE%9A.md", safe="")),
     ],
 )
 @pytest.mark.asyncio
-async def test_multipart_upload_preserves_original_unicode_filename(
+async def test_upload_uses_standard_multipart_without_filename_workarounds(
     api_server, tmp_path, name, expected
 ):
     client, requests, *_ = api_server

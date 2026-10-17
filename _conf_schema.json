@@ -88,8 +88,8 @@
   "custom_cdn_proxy": {
     "description": "自定义 CDN 反代地址",
     "type": "string",
-    "hint": "自建 CDN 反向代理的基础地址，如 https://yhcdn.yunhucdn.top。插件会自动拼接 /{类型}/{key}（类型为 image/video/file/audio）。留空则不使用自定义反代，仅依赖内置反代和备用反代。",
+    "hint": "可选的自建 CDN 反向代理基础地址，默认留空。配置后会拼接 /{类型}/{key}（类型为 image/video/file/audio）。",
     "obvious_hint": false,
-    "default": "https://yhcdn.yunhucdn.top"
+    "default": ""
   }
 }

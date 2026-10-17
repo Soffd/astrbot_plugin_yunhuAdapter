@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>云湖控制台</title>
+    <link rel="icon" type="image/png" href="./assets/logo.png" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="header">
+        <div class="brand">
+          <img
+            class="brand-mark"
+            src="./assets/logo.png"
+            alt="云湖适配器 logo"
+            width="46"
+            height="46"
+          />
+          <div>
+            <h1>云湖控制台</h1>
+            <p>文件有序保存，功能随手管理</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <label class="instance-label" for="instance">平台实例</label
+          ><select id="instance" aria-label="平台实例">
+            <option value="">正在载入…</option></select
+          ><button id="refresh" class="button secondary" type="button">
+            刷新
+          </button>
+        </div>
+      </header>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <div class="status-line">
+        <span id="connection" class="status-dot">等待连接</span
+        ><span id="bot-label">—</span
+        ><span class="version"
+          >YUNHU ADAPTER <span id="version">2.5.0</span></span
+        >
+      </div>
+      <nav class="tabs" role="tablist" aria-label="管理功能">
+        <button
+          id="tab-files"
+          role="tab"
+          aria-controls="panel-files"
+          tabindex="0"
+          class="tab active"
+          data-tab="files"
+          type="button"
+          aria-selected="true"
+        >
+          文件库</button
+        ><button
+          id="tab-settings"
+          role="tab"
+          aria-controls="panel-settings"
+          tabindex="-1"
+          class="tab"
+          data-tab="settings"
+          type="button"
+          aria-selected="false"
+        >
+          保存与消息设置</button
+        ><button
+          id="tab-operations"
+          role="tab"
+          aria-controls="panel-operations"
+          tabindex="-1"
+          class="tab"
+          data-tab="operations"
+          type="button"
+          aria-selected="false"
+        >
+          功能操作
+        </button>
+      </nav>
+
+      <main>
+        <section
+          id="panel-files"
+          role="tabpanel"
+          class="panel"
+          aria-labelledby="tab-files"
+        >
+          <div class="summary-grid">
+            <article class="metric">
+              <div class="metric-label">
+                保留文件 <span class="metric-icon">▤</span>
+              </div>
+              <div class="metric-number" id="file-count">—</div>
+              <p id="file-limit">当前实例的所有会话</p>
+            </article>
+            <article class="metric">
+              <div class="metric-label">
+                已用空间 <span class="metric-icon">◫</span>
+              </div>
+              <div class="metric-number" id="used-space">—</div>
+              <div
+                class="meter"
+                role="meter"
+                aria-label="文件库空间使用比例"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+              >
+                <span id="space-bar"></span>
+              </div>
+              <p id="space-limit">正在读取容量</p>
+            </article>
+            <article class="metric">
+              <div class="metric-label">
+                长期保留 <span class="metric-icon">♧</span>
+              </div>
+              <div class="metric-number" id="pinned-count">—</div>
+              <p id="pinned-size">长期保留文件仍计入容量</p>
+            </article>
+            <article class="metric">
+              <div class="metric-label">
+                默认保存 <span class="metric-icon">◷</span>
+              </div>
+              <div class="metric-number" id="retention-days">—</div>
+              <p>到期或空间不足时按策略清理</p>
+            </article>
+          </div>
+          <div class="section-heading">
+            <div>
+              <h2>保留的文件</h2>
+              <p>按原名查找，跨消息、跨重启继续使用。</p>
+            </div>
+            <button id="cleanup" class="button secondary" type="button">
+              按策略清理
+            </button>
+          </div>
+          <div class="file-card">
+            <div class="filters">
+              <label class="search"
+                ><span aria-hidden="true">⌕</span
+                ><input
+                  id="search"
+                  type="search"
+                  placeholder="搜索文件名、文件 ID 或会话 ID"
+                  aria-label="搜索文件" /></label
+              ><select id="conversation" aria-label="筛选会话">
+                <option value="">所有会话</option></select
+              ><select id="file-status" aria-label="筛选保留状态">
+                <option value="all">全部状态</option>
+                <option value="pinned">长期保留</option>
+                <option value="temporary">按期清理</option>
+              </select>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>文件名</th>
+                    <th>来源会话</th>
+                    <th>大小</th>
+                    <th>保留策略</th>
+                    <th>接收时间</th>
+                    <th class="actions-heading">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="files-body"></tbody>
+              </table>
+            </div>
+            <div id="file-empty" class="empty" hidden>
+              <div class="empty-icon">▤</div>
+              <h3>还没有保留文件</h3>
+              <p>向机器人发送文件后，会按当前保存策略加入这里。</p>
+            </div>
+            <footer class="pagination">
+              <span id="pagination-label">正在载入文件…</span>
+              <div>
+                <button
+                  id="prev"
+                  class="button small secondary"
+                  type="button"
+                  disabled
+                >
+                  上一页</button
+                ><button
+                  id="next"
+                  class="button small secondary"
+                  type="button"
+                  disabled
+                >
+                  下一页
+                </button>
+              </div>
+            </footer>
+          </div>
+          <p class="footnote">
+            本页管理所选实例的文件。聊天中的文件读取仍按群聊、私聊隔离；长期保留文件不会被自动淘汰。
+          </p>
+        </section>
+
+        <section
+          id="panel-settings"
+          role="tabpanel"
+          class="panel"
+          aria-labelledby="tab-settings"
+          hidden
+        >
+          <div class="section-heading">
+            <div>
+              <h2>保存与消息设置</h2>
+              <p>保存到 AstrBot 配置，并立即应用到当前实例。</p>
+            </div>
+          </div>
+          <form id="settings-form">
+            <div class="settings-grid">
+              <article class="form-card">
+                <div class="card-heading">
+                  <span class="card-number">01</span>
+                  <div>
+                    <h3>文件保存策略</h3>
+                    <p>在可持续使用和空间占用之间取得平衡。</p>
+                  </div>
+                </div>
+                <label class="field"
+                  >默认保留天数<input
+                    name="file_retention_days"
+                    type="number"
+                    min="0"
+                    max="36500"
+                    required
+                  /><small
+                    >0
+                    表示关闭新文件的自动保留；既有文件保留原来的到期时间。</small
+                  ></label
+                >
+                <div class="form-row">
+                  <label class="field"
+                    >文件库容量 · MiB<input
+                      name="file_store_max_mb"
+                      type="number"
+                      min="1"
+                      required /></label
+                  ><label class="field"
+                    >最多保留文件数<input
+                      name="file_store_max_count"
+                      type="number"
+                      min="1"
+                      required
+                  /></label>
+                </div>
+                <div class="inline-note">
+                  调低容量或数量后，将按接收时间淘汰最早的非长期保留文件。长期保留文件仍占容量，空间不足时新文件只供当前事件使用。
+                </div>
+              </article>
+              <article class="form-card">
+                <div class="card-heading">
+                  <span class="card-number">02</span>
+                  <div>
+                    <h3>消息处理</h3>
+                    <p>管理身份识别、临时缓存与回复方式。</p>
+                  </div>
+                </div>
+                <label class="field"
+                  >云湖机器人 ID<input
+                    name="bot_id"
+                    inputmode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="云湖真实数字 ID"
+                  /><small
+                    >用于识别群聊中对机器人的 @；留空时需先通过私聊识别。</small
+                  ></label
+                >
+                <label class="field"
+                  >临时媒体缓存 · 秒<input
+                    name="media_ttl"
+                    type="number"
+                    min="1"
+                    required
+                  /><small>仅作用于尚未交给消息事件的临时媒体。</small></label
+                >
+                <label class="switch-field"
+                  ><span
+                    ><strong>以引用方式回复</strong
+                    ><small
+                      >普通回复携带原消息；流式文本会合并后发送。</small
+                    ></span
+                  ><input name="reply_in_thread" type="checkbox" role="switch"
+                /></label>
+              </article>
+            </div>
+            <div class="storage-location">
+              <span>文件保存位置</span><code id="storage-path">—</code>
+              <p>
+                连接参数、Token 和保存目录在 AstrBot
+                的机器人管理中修改，重载实例后生效。
+              </p>
+            </div>
+            <div class="form-footer">
+              <span id="settings-state" role="status"
+                >设置按平台实例分别保存</span
+              ><button id="save-settings" class="button primary" type="submit">
+                保存并应用
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section
+          id="panel-operations"
+          role="tabpanel"
+          class="panel"
+          aria-labelledby="tab-operations"
+          hidden
+        >
+          <div class="section-heading">
+            <div>
+              <h2>功能操作</h2>
+              <p>直接调用当前机器人的云湖能力，返回真实 API 结果。</p>
+            </div>
+            <span class="badge admin-badge">Dashboard 管理员</span>
+          </div>
+          <div class="operations-grid">
+            <form id="operation-form" class="form-card">
+              <h3>选择会话和操作</h3>
+              <div class="form-row">
+                <label class="field"
+                  >会话类型<select id="operation-chat-type">
+                    <option value="group">群聊</option>
+                    <option value="user">私聊</option>
+                  </select></label
+                ><label class="field"
+                  >群 / 用户 ID<input
+                    id="operation-chat-id"
+                    required
+                    placeholder="填写真实 ID"
+                    maxlength="128"
+                    list="known-chats"
+                /></label>
+              </div>
+              <datalist id="known-chats"></datalist
+              ><label class="field"
+                >操作<select id="operation-name"></select
+              ></label>
+              <p id="operation-description" class="operation-description"></p>
+              <div id="operation-fields"></div>
+              <div class="inline-note">
+                操作以已登录的 Dashboard
+                管理员身份执行。禁言、移除成员等功能仍需机器人具备对应的云湖权限。
+              </div>
+              <button
+                id="run-operation"
+                class="button primary full-width"
+                type="submit"
+              >
+                执行操作
+              </button>
+            </form>
+            <article class="form-card result-card">
+              <div class="result-heading">
+                <h3>执行结果</h3>
+                <span id="result-status" class="badge">等待操作</span>
+              </div>
+              <p id="result-message">
+                操作完成后，这里显示云湖响应及失败原因。
+              </p>
+              <pre id="operation-result" tabindex="0">尚未执行操作</pre>
+              <p class="footnote">发送成功后无需在聊天中再次发送相同内容。</p>
+            </article>
+          </div>
+        </section>
+      </main>
+      <footer class="page-footer">
+        <span>云湖平台适配器</span><span>文件名与编码以云湖服务器返回为准</span>
+      </footer>
+    </div>
+
+    <dialog
+      id="preview-dialog"
+      aria-labelledby="preview-title"
+      class="preview-dialog"
+    >
+      <div class="dialog-header">
+        <div>
+          <h2 id="preview-title">文件预览</h2>
+          <p id="preview-meta"></p>
+        </div>
+        <button
+          id="close-preview"
+          class="icon-button"
+          type="button"
+          aria-label="关闭文件预览"
+        >
+          ×
+        </button>
+      </div>
+      <pre id="preview-content" tabindex="0"></pre>
+      <div class="dialog-footer">
+        <span id="preview-note"></span
+        ><button id="preview-download" class="button primary" type="button">
+          下载原文件
+        </button>
+      </div>
+    </dialog>
+    <dialog
+      id="confirm-dialog"
+      aria-labelledby="confirm-title"
+      aria-describedby="confirm-description"
+      class="confirm-dialog"
+    >
+      <h2 id="confirm-title">确认操作</h2>
+      <p id="confirm-description"></p>
+      <pre id="confirm-detail" hidden></pre>
+      <div class="dialog-footer">
+        <button id="confirm-cancel" class="button secondary" type="button">
+          取消</button
+        ><button id="confirm-submit" class="button primary" type="button">
+          确认
+        </button>
+      </div>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

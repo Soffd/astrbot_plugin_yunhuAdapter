@@ -21,6 +21,7 @@ def test_schema_loads_after_working_directory_changes(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = importlib.reload(config_module)
     assert config.DEFAULT_CONFIG["websocket_url"] == "wss://ws.jwzhd.com/subscribe"
+    assert config.DEFAULT_CONFIG["custom_cdn_proxy"] == ""
     assert "bot_id" in config.CONFIG_METADATA
 
 

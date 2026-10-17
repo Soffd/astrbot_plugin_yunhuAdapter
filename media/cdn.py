@@ -98,7 +98,7 @@ class CdnProxy:
       3. 备用反代（chat-webp.000434.xyz，仅图片）
 
     使用方式：
-      proxy = CdnProxy(dl_session, custom_proxy_base="https://yhcdn.yunhucdn.top")
+      proxy = CdnProxy(dl_session)
       data = await proxy.download("abc123.mp4", "video")
     """
 
@@ -110,7 +110,7 @@ class CdnProxy:
         """
         Args:
             dl_session: aiohttp 会话（由适配器提供，复用连接池）
-            custom_proxy_base: 自定义反代基础地址，如 https://yhcdn.yunhucdn.top
+            custom_proxy_base: 可选的自建反代基础地址。
                                插件会自动拼接 /{类型}/{key}。
                                留空表示不使用自定义反代。
         """
@@ -224,7 +224,6 @@ class CdnProxy:
         自定义反代：通过用户配置的反代地址下载。
 
         URL 格式：{custom_proxy_base}/{type}/{key}
-        例如：https://yhcdn.yunhucdn.top/video/abc123.mp4
         """
         if not self._custom_proxy_base:
             return None

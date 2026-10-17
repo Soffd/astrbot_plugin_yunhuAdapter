@@ -4,6 +4,7 @@ import importlib
 import logging
 import sys
 import types
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -12,6 +13,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 import pytest
+from fastapi.responses import FileResponse, JSONResponse
 
 ROOT = Path(__file__).resolve().parents[1]
 package = types.ModuleType("yunhu_plugin")
@@ -83,6 +85,24 @@ class Star:
 star_api.Star = Star
 star_api.Context = type("Context", (), {})
 star_api.register = lambda *args, **kwargs: lambda cls: cls
+
+web_api = module("astrbot.api.web")
+web_api._request_context = ContextVar("yunhu_test_web_request")
+
+
+class WebRequestProxy:
+    def __getattr__(self, name):
+        return getattr(web_api._request_context.get(), name)
+
+
+web_api.request = WebRequestProxy()
+web_api.json_response = lambda data=None, **kwargs: JSONResponse(data, **kwargs)
+web_api.error_response = lambda message, status_code=400: JSONResponse(
+    {"status": "error", "message": message}, status_code=status_code
+)
+web_api.file_response = lambda path, filename=None, content_type=None, headers=None: (
+    FileResponse(path, filename=filename, media_type=content_type, headers=headers)
+)
 
 
 class MessageType(Enum):

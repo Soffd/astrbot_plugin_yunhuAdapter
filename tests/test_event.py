@@ -105,11 +105,14 @@ async def test_media_uses_astrbot_resolver(
 
 @pytest.mark.parametrize(
     "name,expected",
-    [("%E8%A7%84%E5%AE%9A.md", "规定.md"), ("进度100%20.md", "进度100%20.md")],
+    [
+        ("%E8%A7%84%E5%AE%9A.md", "%E8%A7%84%E5%AE%9A.md"),
+        ("进度100%20.md", "进度100%20.md"),
+    ],
 )
 @pytest.mark.parametrize("recv_type", ["group", "user"])
 @pytest.mark.asyncio
-async def test_send_file_decodes_encoded_display_name(
+async def test_send_file_does_not_rewrite_encoded_display_name(
     event_factory, fake_client, tmp_path, recv_type, name, expected
 ):
     path = tmp_path / "hash.md"

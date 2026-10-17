@@ -175,6 +175,86 @@ class FileStore:
                 )
             ]
 
+    def catalog(
+        self, *, search="", chat_type="", chat_id="", status="all", limit=20, offset=0
+    ):
+        """Dashboard管理员视图；仅查询当前实例，分页及筛选均在数据库执行。"""
+        if chat_type not in ("", "group", "user") or status not in (
+            "all",
+            "pinned",
+            "temporary",
+        ):
+            raise ValueError("文件筛选参数无效")
+        if not 1 <= limit <= 100 or offset < 0:
+            raise ValueError("分页参数无效")
+        clauses, args = [], []
+        for key, value in (("chat_type", chat_type), ("chat_id", chat_id)):
+            if value:
+                clauses.append(f"{key}=?")
+                args.append(value)
+        if search:
+            clauses.append(
+                "(instr(lower(file_name),lower(?))>0 OR instr(file_id,?)>0 OR instr(chat_id,?)>0)"
+            )
+            args.extend([search, search, search])
+        if status != "all":
+            clauses.append("pinned=?")
+            args.append(int(status == "pinned"))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._lock, self._db() as db:
+            used, count = self._cleanup(db)
+            pinned = db.execute(
+                "SELECT COUNT(*),COALESCE(SUM(size),0) FROM files WHERE pinned=1"
+            ).fetchone()
+            total = db.execute("SELECT COUNT(*) FROM files" + where, args).fetchone()[0]
+            records = db.execute(
+                "SELECT * FROM files"
+                + where
+                + " ORDER BY created_at DESC,file_id LIMIT ? OFFSET ?",
+                [*args, limit, offset],
+            ).fetchall()
+            conversations = db.execute(
+                "SELECT chat_type,chat_id,COUNT(*) AS file_count FROM files GROUP BY chat_type,chat_id ORDER BY chat_type,chat_id"
+            ).fetchall()
+            return {
+                "items": [dict(row) for row in records],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "conversations": [dict(row) for row in conversations],
+                "usage": {
+                    "used_bytes": used,
+                    "file_count": count,
+                    "pinned_count": pinned[0],
+                    "pinned_bytes": pinned[1],
+                    "max_bytes": self.max_bytes,
+                    "max_files": self.max_files,
+                    "retention_days": self.retention_days,
+                },
+            }
+
+    def record(self, file_id):
+        if not isinstance(file_id, str) or not re.fullmatch(r"[a-f0-9]{32}", file_id):
+            raise ValueError("文件ID格式无效")
+        with self._lock, self._db() as db:
+            self._cleanup(db)
+            record = db.execute(
+                "SELECT * FROM files WHERE file_id=?", (file_id,)
+            ).fetchone()
+            if record is None:
+                raise LookupError("文件已过期、已删除或不属于当前实例")
+            return dict(record)
+
+    def configure(self, retention_days, max_bytes, max_files):
+        if retention_days < 0 or max_bytes < 1 or max_files < 1:
+            raise ValueError("保存天数不能小于0，容量和文件数量必须大于0")
+        with self._lock:
+            self.retention_days, self.max_bytes, self.max_files = (
+                retention_days,
+                max_bytes,
+                max_files,
+            )
+
     def _select(self, db, chat_type, chat_id, file_id="", file_name=""):
         rows = db.execute(
             "SELECT * FROM files WHERE chat_type=? AND chat_id=?", (chat_type, chat_id)
